@@ -1,15 +1,13 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::encryption_key::{self, EncryptionKey};
 
-pub use encryption_key::ParseError as InvalidEncryptionKeyError;
-
 pub struct SystemJson {
-    pub encryption_key: EncryptionKey,
-    pub content: Map<String, Value>,
+    encryption_key: EncryptionKey,
+    content: Map<String, Value>,
 }
 
 impl FromStr for SystemJson {
@@ -38,10 +36,24 @@ impl FromStr for SystemJson {
     }
 }
 
+impl fmt::Display for SystemJson {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            serde_json::to_string(&self.content).expect("success")
+        )
+    }
+}
+
 impl SystemJson {
     pub fn mark_as_unencrypted(&mut self) {
         self.content["hasEncryptedAudio"] = Value::Bool(false);
         self.content["hasEncryptedImages"] = Value::Bool(false);
+    }
+
+    pub fn get_encryption_key(&self) -> &EncryptionKey {
+        &self.encryption_key
     }
 }
 
@@ -60,6 +72,6 @@ pub enum ParseError {
     InvalidEncryptionKey {
         encryption_key: String,
         #[source]
-        source: InvalidEncryptionKeyError,
+        source: encryption_key::ParseError,
     },
 }

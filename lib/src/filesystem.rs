@@ -10,14 +10,12 @@ use thiserror::Error;
 use walkdir::WalkDir;
 
 use crate::{
-    decrypter,
+    Encrypted, encrypted,
     encryption_key::EncryptionKey,
     system_json::{self, SystemJson},
 };
 
 use self::plan::Plan;
-
-pub use system_json::{InvalidEncryptionKeyError, ParseError as ParseSystemJsonError};
 
 pub fn decrypt(game_dir: &Path) -> Result<(), DecryptionError> {
     let (path, content) = read_system_json(game_dir)?;
@@ -29,15 +27,15 @@ pub fn decrypt(game_dir: &Path) -> Result<(), DecryptionError> {
     WalkDir::new(game_dir)
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
-        // since follow_links=false, loops won't occur.
         .map_err(|e| DecryptionError::Scan {
             path: e.path().map(Path::to_path_buf),
-            source: e.into_io_error().unwrap(),
+            source: e
+                .into_io_error()
+                .expect("success since loops won't occur because of follow_links=false"),
         })?
-        .into_iter()
+        .into_par_iter()
         .filter_map(Plan::new)
-        .par_bridge()
-        .try_for_each(|plan| do_decrypt(&plan, &system_json.encryption_key))?;
+        .try_for_each(|plan| do_decrypt(&plan, system_json.get_encryption_key()))?;
 
     system_json.mark_as_unencrypted();
 
@@ -69,13 +67,21 @@ fn read_system_json(game_dir: &Path) -> Result<(PathBuf, String), DecryptionErro
 }
 
 fn do_decrypt(plan: &Plan, encryption_key: &EncryptionKey) -> Result<(), DecryptionError> {
-    let mut bytes = fs::read(&plan.source) //
+    let bytes = fs::read(&plan.source) //
         .map_err(|source| DecryptionError::ReadEncryptedFile {
             path: plan.source.clone(),
             source,
         })?;
 
-    fs::write(&plan.dest, decrypter::decrypt(&mut bytes, encryption_key)) //
+    let encrypted = Encrypted::new(bytes) //
+        .map_err(|source| DecryptionError::InvalidEncryptedFile {
+            path: plan.source.clone(),
+            source,
+        })?;
+
+    let decrypted_view = encrypted.into_decrypted_view(encryption_key);
+
+    fs::write(&plan.dest, decrypted_view.as_bytes()) //
         .map_err(|source| DecryptionError::WriteDecryptedFile {
             path: plan.source.clone(),
             source,
@@ -89,14 +95,11 @@ fn do_decrypt(plan: &Plan, encryption_key: &EncryptionKey) -> Result<(), Decrypt
 }
 
 fn write_system_json(path: &Path, system_json: &SystemJson) -> Result<(), DecryptionError> {
-    fs::write(
-        path,
-        serde_json::to_string(&system_json.content).expect("success"),
-    )
-    .map_err(|source| DecryptionError::MarkSystemJsonAsUnencrypted {
-        path: path.to_path_buf(),
-        source,
-    })
+    fs::write(path, system_json.to_string()) //
+        .map_err(|source| DecryptionError::MarkSystemJsonAsUnencrypted {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 #[derive(Debug, Error)]
@@ -121,7 +124,7 @@ pub enum DecryptionError {
     ParseSystemJson {
         path: PathBuf,
         #[source]
-        source: ParseSystemJsonError,
+        source: system_json::ParseError,
     },
 
     #[error("failed to scan({path:?}): {source}")]
@@ -136,6 +139,13 @@ pub enum DecryptionError {
         path: PathBuf,
         #[source]
         source: io::Error,
+    },
+
+    #[error("failed to decrypt file({path}): {source}")]
+    InvalidEncryptedFile {
+        path: PathBuf,
+        #[source]
+        source: encrypted::InvalidEncryptedBytesError,
     },
 
     #[error("failed to write decrypted file({path}): {source}")]
