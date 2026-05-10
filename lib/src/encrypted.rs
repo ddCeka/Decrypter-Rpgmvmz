@@ -1,20 +1,19 @@
 mod decrypted_view;
 
+use hex_literal::hex;
 use thiserror::Error;
 
-use crate::encryption_key::EncryptionKey;
+use crate::EncryptionKey;
 
-use self::decrypted_view::DecryptedView;
+use decrypted_view::DecryptedView;
 
 pub struct Encrypted(Vec<u8>);
 
-const ENCRYPTION_HEADER: &[u8; 16] = &[
-    0x52, 0x50, 0x47, 0x4d, 0x56, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
+static ENCRYPTION_HEADER: [u8; 16] = hex!("52 50 47 4d 56 00 00 00 00 03 01 00 00 00 00 00");
 
 impl Encrypted {
     pub fn new(bytes: Vec<u8>) -> Result<Self, InvalidEncryptedBytesError> {
-        if !bytes.starts_with(ENCRYPTION_HEADER) {
+        if !bytes.starts_with(&ENCRYPTION_HEADER) {
             return Err(InvalidEncryptedBytesError::InvalidEncryptionHeader);
         }
 
